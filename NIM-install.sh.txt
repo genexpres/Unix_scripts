@@ -1,0 +1,1498 @@
+ #!/bin/sh
+#****************************************
+#
+# This script should be run from the
+# pjm.custom installp package only.
+#
+# Additionally, it should be installed as # a NIM package *AFTER* the standard image # is completed, preferably as a client # initiated install.
+#****************************************
+ 
+ 
+ 
+#############
+# Functions #
+#############
+function fe {
+        FILE=$1
+        [ -e "$FILE" ] && return 0 || return 255 } function showstep {
+                echo "==============================================="
+                echo "   $@ "
+                echo "==============================================="
+}
+# Get netmask of ifconfig
+function getmask {
+        IP=$1
+        ifconfig -a | grep $IP | awk '{print $4}'
+}
+# Get IP from hosts or DNS
+function getIP {
+        grep `hostname -s ` /etc/hosts | awk '{print $1}'
+}
+ 
+ 
+ 
+#############
+# Variables #
+#############
+LOG="/root/pjm_custom.log_$$"
+IP=`getIP` # Determine Network (used for XNTP & DNS..) NET=`echo $IP|cut -d '.' -f1,2,3`
+ 
+ 
+############
+# Set Exec #
+############
+showstep "PJM Custom Image Configuration Log           "
+exec >>$LOG 2>&1
+ 
+ 
+ 
+########################################################
+# Move user home directories to /users (Blame Siemens) # ########################################################
+showstep "Moving default home directory location to /users.";echo fuser -k /home umount /home chfs -m /users /home mount /users chsec -f /usr/lib/security/mkuser.default -s user -a home='/users/$USER'
+ 
+ 
+ 
+#######################
+# Copy required files #
+#######################
+showstep "Copying prereq files..";echo
+mkdir -p /usr/local/etc
+mkdir -p /usr/local/bin
+fe /root/stdimg_ulock && cp -p /root/stdimg_ulock /usr/local/bin/ulock fe /root/stdimg_unlock_admins && cp -p /root/stdimg_unlock_admins /usr/local/etc/unlock_admins fe /root/stdimg_setpasswd && cp -p /root/stdimg_setpasswd /root/setpasswd
+ 
+ 
+ 
+######################
+# Setup Basic Groups #
+######################
+showstep "Setting basic groups..";echo
+mkgroup -a id=22 sshd
+mkgroup -a id=10000 rootprvl
+chgroup id=777 usr
+mkgroup id=100 users
+rmgroup usr
+mkgroup id=10002 tivoli
+mkgroup id=10003 dba
+mkgroup id=230 tsm
+mkgroup id=10016 mayday
+mkgroup -a id=10010 bmc
+mkgroup id=7 security
+chgroup admin=false tivoli
+chgroup admin=false dba
+chgroup admin=false tsm
+ 
+ 
+###################
+# Set up Ulockadm #
+###################
+showstep "Configuring ulockadm.." ;echo
+[ ! -d "/var/empty" ] && mkdir /var/empty
+chmod 755 /var/empty
+SH=`lssec -f /etc/security/login.cfg -s usw -a shells | awk '{print $2}' `
+chsec -f /etc/security/login.cfg -s usw -a ${SH},/usr/local/bin/ulock
+/usr/bin/mkuser id='12130' pgrp='users' \
+groups='users' su='false' home='/var/empty' \
+shell='/usr/local/bin/ulock' gecos='ulockadm' \
+loginretries='0' expires='0' \
+maxage='0' ulockadm
+# Updated ulockadm passwd 20100615
+# Updated ulockadm passwd 20100927
+/root/setpasswd ulockadm bh8X/BGiXk5Lc
+echo '%rootprvl ALL=(ALL) ALL' >>/etc/sudoers
+echo 'ulockadm ALL=NOPASSWD:/usr/local/etc/unlock_admins' >>/etc/sudoers
+chmod 440 /etc/sudoers
+ 
+ 
+ 
+########################
+# Set up nmon cron job #
+########################
+showstep "Setting up nmon cronjobs.." ;echo
+CRONFILE_ORIG=/root/cronfile.orig
+CRONFILE_NEW=/root/cronfile
+crontab -l >$CRONFILE_ORIG
+echo;echo "Saved root crontab to $CRONFILE_ORIG";echo
+cat $CRONFILE_ORIG>$CRONFILE_NEW
+#echo '0 0 * * * /usr/local/etc/rotateLogs' >>$CRONFILE_NEW
+echo '0 0 * * * /usr/bin/nmon -fdt -A -s 300 -c 288 -m /maint/perf_data/' >>$CRONFILE_NEW
+echo '30 0 * * * /root/purge_nmon.sh' >>$CRONFILE_NEW
+echo 'Added nmon jobs to root cron'
+crontab $CRONFILE_NEW
+ 
+ 
+ 
+###################
+# Setup root user #
+###################
+# Setup root's home
+showstep "Setting up root user.." ;echo
+[ ! -d "/root" ] && mkdir /root
+chown 0:0 /root; chmod 755 /root
+chuser home=/root root
+cp /root/stdimg_profile /root/.profile
+ 
+showstep "Setting up root's password..";echo
+# Set root's password
+/root/setpasswd root zzTanTdjMIn9U
+ 
+# Setup root and daemon gecos
+showstep "Securing root user..";echo
+for id in root daemon; do
+  chuser gecos="$id $HOST" $id
+done
+ 
+chsec -f /etc/security/user -s root -a sugroups=mayday
+chsec -f /etc/security/user -s root -a rlogin=false
+chsec -f /etc/security/user -s root -a login=false
+chsec -f /etc/security/user -s root -a loginretries=0
+chsec -f /etc/security/user -s root -a account_locked=false
+chsec -f /etc/security/user -s root -a SYSTEM="compat"
+chsec -f /etc/security/limits -s root -a "fsize = -1"
+chsec -f /etc/security/limits -s root -a "core = -1"
+chsec -f /etc/security/limits -s root -a "cpu = -1"
+chsec -f /etc/security/limits -s root -a "data = -1"
+chsec -f /etc/security/limits -s root -a "stack = -1"
+chsec -f /etc/security/limits -s root -a "rss = -1"
+chsec -f /etc/security/limits -s root -a "nofiles = -1"
+ 
+ 
+ 
+##################
+# Setup sos user #
+##################
+showstep "Setting up sshd user.." ;echo
+mkuser id=10018 pgrp=users groups=mayday gecos="SOS" minage=0 maxage=0 sos
+/root/setpasswd sos 'zzBu8/vqzvqZY'
+ 
+ 
+###################
+# Setup sshd user #
+###################
+showstep "Setting up sshd user.." ;echo
+[ ! -d /var/empty ] && mkdir /var/empty
+chown 0:0 /var/empty
+chmod 755 /var/empty
+mkuser id=22 pgrp=sshd groups=sshd gecos="OpenSSH privilege separation" \
+  home=/var/empty sshd
+# Need fix for 'ex' below #
+ex /etc/passwd <<\EOT 2>/dev/null
+/^ssh
+s/\/usr\/bin\/ksh/\/bin\/false/
+wq
+EOT
+chsec -f /etc/security/user -s sshd -a admin=false
+chsec -f /etc/security/user -s sshd -a expires=0101000070
+chsec -f /etc/security/user -s sshd -a account_locked=true
+chsec -f /etc/security/user -s sshd -a login=false
+chsec -f /etc/security/user -s sshd -a rlogin=false
+ 
+ 
+ 
+#################
+# Setup perfmon #
+#################
+showstep "Setting up perfmon user.." ;echo
+mkuser id=10082 pgrp=perf groups=perf gecos="perfmon $HOST" perfmon
+chuser account_locked=false expires=0 loginretries=0 maxage=0 perfmon
+chuser gecos="perfmon `hostname -s`" perfmon
+mkdir ~perfmon/.ssh 2>/dev/null
+cat - <<EOT > ~perfmon/.ssh/authorized_keys
+ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEA4TvlfnxoJWnvAEU7kWOKGb3yBpNSPl5k0ZzB4m+5Or3xRU4QKvTkUjgjePjKplMBPvtDYP5Gjq9nMVQFxOp1068vvn70kpfSfM838iwQN2ImIaPIE0gt0UJQNAAnZPScKwYFQKBizoEmOiWwBGcYd9lqILHUNko3IfBx3cJgsI8= perfmon@adm01aap
+ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEAnvIvEI2f9su8l4Dfvtt11LvKxYL2DJ3BNEeUt38eLMLkqS1wbVm+MtQ2Wu7QRya8TQwxptA7kmhVCNrpnNeIU2T9xTUd3FJXoaow3qdvaOZXKroONmTJRCFrO8UTHebB/q0sdKVxxjw66LUrUDsVTU0sN3nQ++lJr3iOf5f19sc= perfmon@csm01aap
+ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEArP3hlXy/+HLMFzgCTiVhFTdB9rE281VCXgh+LrJa3qCC1BLS9nUsdB2MdJrcZgjE3W+f4HBDf85G069CKkRENHgAhylDiod2jJymKWbpV5FBbJMHd+VLPik6e0uKWKXWtTKjhNwHCWWOpWgamS1My0uei0FHUIuH+tZxfhF71Hs= perfmon@adm01alp
+EOT
+chown -R perfmon:perf ~perfmon/
+chmod 700 ~perfmon/.ssh
+chmod 600 ~perfmon/.ssh/*
+# Updated perfmon passwd 20100615
+/root/setpasswd perfmon CVPXnSgja0xqw
+ 
+ 
+ 
+#####################
+# Setup Remedy user #
+#####################
+showstep "Creating Remedy user..";echo
+mkuser id=2000 pgrp=users groups=users remedy
+chuser gecos="remedy discovery" remedy
+chuser account_locked=false expires=0 loginretries=0 maxage=0 remedy
+mkdir ~remedy/.ssh
+chown remedy:users ~remedy/.ssh;chmod 700 ~remedy/.ssh
+fe /root/remedy_ssh_keys && cp /root/remedy_ssh_keys ~remedy/.ssh/authorized_keys && \
+chown remedy:users ~remedy/.ssh/authorized_keys
+showstep "Completed Remedy user setup..";echo
+ 
+ 
+ 
+######################
+# Setup Courion user #
+######################
+showstep "Creating Courion user..";echo
+mkuser id=2048 pgrp=users groups=users,security courion
+chuser gecos="courion" courion
+chgrpmem -m + root security
+/root/setpasswd courion !
+mkdir ~courion/.ssh
+fe /root/courion_ssh_keys && cp /root/courion_ssh_keys ~courion/.ssh/authorized_keys && \
+chown courion:users ~courion/.ssh/authorized_keys
+showstep "Completed Courion user setup..";echo
+ 
+ 
+ 
+ 
+##########################
+# Lock down system users #
+##########################
+showstep "Locking down system users.." ;echo
+for id in daemon bin sys adm uucp nuucp sshd snapp invscout\
+          lpd lp nobody guest ipsec; do
+  chsec -f /etc/security/user -s $id -a admin=false
+  chsec -f /etc/security/user -s $id -a expires=0101000070
+  chsec -f /etc/security/user -s $id -a account_locked=true
+  chsec -f /etc/security/user -s $id -a login=false
+  chsec -f /etc/security/user -s $id -a rlogin=false
+done
+ 
+ 
+ 
+#######################################
+# Basic user creation defaults config #
+#######################################
+showstep "Configuring defaults for users.." ;echo
+chsec -f /etc/security/login.cfg -s usw -a shells=\
+/bin/sh,/bin/bsh,/bin/csh,/bin/ksh,/bin/tsh,/bin/ksh93,\
+/usr/bin/sh,/usr/bin/bsh,/usr/bin/csh,/usr/bin/ksh,/usr/bin/tsh,/usr/bin/ksh93
+chsec -f /usr/lib/security/mkuser.default -s user -a pgrp=users
+chsec -f /usr/lib/security/mkuser.default -s user -a groups=users
+chsec -f /usr/lib/security/mkuser.default -s admin -a pgrp=rootprvl
+chsec -f /usr/lib/security/mkuser.default -s admin -a groups=rootprvl
+chsec -f /etc/security/user -s default -a pwdwarntime=7
+chsec -f /etc/security/user -s default -a loginretries=3
+chsec -f /etc/security/user -s default -a histexpire=26
+chsec -f /etc/security/user -s default -a histsize=15
+chsec -f /etc/security/user -s default -a minage=0
+chsec -f /etc/security/user -s default -a maxage=9
+chsec -f /etc/security/user -s default -a maxexpired=2
+chsec -f /etc/security/user -s default -a minalpha=1
+chsec -f /etc/security/user -s default -a minother=1
+chsec -f /etc/security/user -s default -a minlen=7
+chsec -f /etc/security/user -s default -a mindiff=2
+chsec -f /etc/security/user -s default -a maxrepeats=2
+ 
+ 
+#####################################
+# Setup AIX 7.1 password complexity #
+#####################################
+showstep "Setting password complexity settings (if AIX 7.1).."
+if [ `oslevel` = "7.1.0.0" ]; then
+ echo 'Fixing /etc/security/user passwd options for AIX 7.1'
+ chsec -f /etc/security/user -s default -a minalpha=1
+ chsec -f /etc/security/user -s default -a minother=2
+ chsec -f /etc/security/user -s default -a mindigit=1
+ chsec -f /etc/security/user -s default -a minspecialchar=1
+fi
+ 
+ 
+#####################
+# Remove guest user #
+#####################
+showstep "Removing guest user..";echo
+rmuser -p guest
+rm -rf /home/guest
+rm -rf /users/guest
+ 
+ 
+ 
+###########################
+# Configure /etc/ftpusers #
+###########################
+showstep "Configuring /etc/ftpusers..";echo
+touch /etc/ftpusers; chown 0:0 /etc/ftpusers; chmod 600 /etc/ftpusers
+cat - <<EOT > /etc/ftpusers
+root
+daemon
+bin
+sys
+adm
+uucp
+guest
+nobody
+lpd
+lp
+invscount
+imnadm
+ipsec
+nuucp
+httpd
+sshd
+oracle
+publish
+enr
+runaudit
+ulockadm
+ldap
+securadm
+perfmon
+rss
+sos
+EOT
+ 
+ 
+ 
+#########################################
+# Set basic filesystem sizes (minimums) #
+#########################################
+showstep "Setting root filesystem minimum sizes..";echo
+chfs -a size=256M /
+chfs -a size=2048M /usr
+chfs -a size=2048M /var
+chfs -a size=1024M /tmp
+lsfs /home >/dev/null 2>&1
+[ $? -eq 0 ] && chfs -a size=512M /home
+lsfs /users >/dev/null 2>&1
+[ $? -eq 0 ] && chfs -a size=512M /users
+chfs -a size=512M /opt
+ 
+ 
+ 
+################################
+# Fix various file permissions #
+################################
+showstep "Setting various file permissions..";echo
+fe /var/spool && chmod g-w /var/spool
+fe /var/spool/mqueue && chmod g-w /var/spool/mqueue
+for f in /tmp /var/tmp /var/preserve /var/locks
+do
+                fe $f && chmod 1777 $f
+done
+for f in /var/msgs /var/news /var/spool/secretmail /usr/lpp/bos.net/inst_root/var/spool/secretmail /var/spool/uucppublic /usr/lpp/bos.net/inst_root/var/spool/uucppublic
+do
+                fe $f && chmod 775 $f
+done
+for f in /var/ifor /usr/lpp/ifor_ls.base/inst_root/var/ifor /var/adm/ffdc /usr/lpp/rsct.core/inst_root/var/adm/ffdc
+do
+                fe $f && chmod -R o-w $f
+done
+for f in /var/perf/tprof /usr/lpp/bos.perf/inst_root/var/perf/tprof /var/adm/ras /var/adm/ras/conslog
+do
+                fe $f && chmod o-w $f
+done
+ 
+ 
+ 
+#############################
+# Add script to fix conslog #
+#############################
+showstep "Adding conslog script..";echo
+cat - <<\EOT > /etc/rc.d/init.d/conslog
+#!/bin/ksh
+ 
+##################################################
+# name: conslog
+# purpose: fix the permissions of the conslog
+##################################################
+ 
+case "$1" in
+  start)
+    chmod o-w /var/adm/ras/conslog
+    ;;
+  stop)
+    ;;
+  *)
+    echo "Usage: $0 (start | stop)"
+    exit 1
+esac
+ 
+EOT
+fe /etc/rc.d/init.d/conslog && chmod 755 /etc/rc.d/init.d/conslog
+cd /etc/rc.d/rc2.d
+ln -s ../init.d/conslog ./S99conslog
+ 
+ 
+ 
+######################
+# Configure licenses #
+######################
+showstep "Configuring licenses.." ;echo
+chlicense -u 32767
+ 
+ 
+###################
+# Change timezone #
+###################
+showstep "Configuring timezone.." ;echo
+chtz EST5EDT
+ 
+ 
+ 
+###########################
+# Basic system dump setup #
+###########################
+showstep "Configuring system dump..";echo
+sysdumpdev -K                                   # always allow dump
+#sysdumpdev -C                                   # dump compression -- This option is removed in AIX6 (default)
+mklv -y dumplv -t sysdump rootvg 16             # need to increase this
+sysdumpdev -P -p /dev/dumplv
+sysdumpdev -P -s /dev/hd6
+mkdir /var/crash
+sysdumpdev -d /var/crash
+rmlv -f lg_dumplv
+ 
+ 
+ 
+##############################
+# Configure /etc/environment #
+##############################
+showstep "Configuring /etc/environment..";echo
+cp /etc/environment /etc/environment.orig
+# Need fix for 'ex' below #
+ex /etc/environment <<\EOT 2>/dev/null
+/^PATH
+s/^/#/
+ 
+i
+PATH=/usr/bin:/usr/sbin:/sbin:/etc:/usr/ucb:/usr/bin/X11
+.
+wq
+EOT
+ 
+# /etc/security/.profile
+showstep "Updating /etc/security/.profile ..";echo
+cp /etc/security/.profile /etc/security/.profile.orig
+# Need fix for 'ex' below #
+ex /etc/security/.profile <<\EOT 2>/dev/null
+/PATH
+ 
+i
+EDITOR=vi
+PS1=`hostname -s`:'${PWD}/> '
+export PS1 EDITOR
+.
+wq
+EOT
+ 
+ 
+ 
+#################################
+# Configure Basic Network Stuff #
+#################################
+showstep "Modifying Network related settings.." ;echo
+showstep "Modifying /etc/hosts.." ;echo
+# Need fix for 'ex' below #
+ex /etc/hosts <<\EOT 2>/dev/null
+/127
+s/^/#/
+wq
+EOT
+ 
+cat - <<\EOT >> /etc/hosts
+ 
+127.0.0.1               localhost localhost.pjm.com
+127.0.0.1               loopback loopback.pjm.com
+ 
+EOT
+ 
+showstep "Modifying /etc/resolv.conf.." ;echo
+touch /etc/resolv.conf
+HOSTNAME=`hostname`
+HOST=`hostname|cut -d '.' -f 1` || HOST=$HOSTNAME
+# Move population of NET variable to beginning, to be used for XNTP as well
+case $NET in
+172.19.*)  echo "$HOSTNAME is on $NET network";
+                R1="172.19.18.17";
+                R2="172.23.32.95";;
+172.23.*)  echo "$HOSTNAME is on $NET network";
+                R1="172.23.32.95";
+                R2="172.19.18.17";;
+192.*)  echo "$HOSTNAME is on $NET network";
+                R1="192.168.113.10";
+        R2="172.19.18.17";;
+*)      R1="172.19.18.17";
+                R2="172.23.32.95";;
+esac
+chown 0:0 /etc/resolv.conf
+chmod 644 /etc/resolv.conf
+cat - <<EOT >> /etc/resolv.conf
+nameserver $R1
+nameserver $R2
+search pjm.com ems.pjm.com tran.pjm.com corp.ds.pjm.com
+EOT
+ 
+#****************************************
+showstep "Modifying /etc/netsvc.conf.." ;echo
+cp /etc/netsvc.conf /etc/netsvc.conf.orig
+touch /etc/netsvc.conf
+chown 0:0 /etc/netsvc.conf
+chmod 664 /etc/netsvc.conf
+cat - <<\EOT >> /etc/netsvc.conf
+hosts=local,bind
+EOT
+ 
+#****************************************
+showstep "Modifying /etc/services.." ;echo
+cat - <<\EOT >> /etc/services
+tsm             1501/tcp        adsm            # Tivoli Storage Manager
+tns             1521/tcp        listener        # Oracle TNS listener
+ctsa_out_rss    2470/tcp                        # RSS
+ctsa_in_rss     2471/tcp                        # RSS
+newd_pwi        2472/tcp                        # RSS
+tsc6142         6142/udp        tscclient       # Asset Mgmt Daemon
+tsc7461         7461/tcp        tscclient       # Asset Mgmt Daemon
+x_st_mgrd       9000/tcp                        # IBM X Terminal
+EOT
+ 
+#****************************************
+showstep "Modifying /etc/rc.net.." ;echo
+cp /etc/rc.net /etc/rc.net.orig
+ex /etc/rc.net <<\EOT 2>/dev/null
+/unset RCNETNO
+i
+if [ -f /usr/sbin/no ] ; then
+  /usr/sbin/no -o bcastping=0
+  /usr/sbin/no -o clean_partial_conns=1
+  /usr/sbin/no -o directed_broadcast=0
+  /usr/sbin/no -o icmpaddressmask=0
+  /usr/sbin/no -o ipforwarding=0
+  /usr/sbin/no -o ip6forwarding=0
+  /usr/sbin/no -o ipignoreredirects=1
+  /usr/sbin/no -o ipsendredirects=0
+  /usr/sbin/no -o ip6srcrouteforward=0
+  /usr/sbin/no -o ipsrcrouteforward=0
+  /usr/sbin/no -o ipsrcrouterecv=0
+  /usr/sbin/no -o ipsrcroutesend=0
+  /usr/sbin/no -o nonlocsrcroute=0
+  /usr/sbin/no -o tcp_pmtu_discover=0           # Generally not useful
+  /usr/sbin/no -o udp_pmtu_discover=0           # Generally not useful
+ 
+  /usr/sbin/no -o delayack=3
+  /usr/sbin/no -o delayackports={80,443,81,8080,8888}
+ 
+  /usr/sbin/no -o tcp_mssdflt=1460
+  /usr/sbin/no -o tcp_sendspace=131072
+  /usr/sbin/no -o tcp_recvspace=65536
+  /usr/sbin/no -o udp_recvspace=524288
+  /usr/sbin/no -o udp_sendspace=65536
+  /usr/sbin/no -o sack=0                        # see newreno for alternative
+  /usr/sbin/no -o tcp_newreno=1                 # RFC2582
+ 
+fi
+ 
+.
+write!
+quit
+EOT
+ 
+#****************************************
+showstep "Setting various no options.." ;echo
+/usr/sbin/no -p -o bcastping=0
+/usr/sbin/no -p -o clean_partial_conns=1
+/usr/sbin/no -p -o directed_broadcast=0
+#/usr/sbin/no -p -o extendednetstats=1
+/usr/sbin/no -p -o icmpaddressmask=0
+/usr/sbin/no -p -o ipforwarding=0
+/usr/sbin/no -p -o ip6forwarding=0
+/usr/sbin/no -p -o ipignoreredirects=1
+/usr/sbin/no -p -o ipsendredirects=0
+/usr/sbin/no -p -o ip6srcrouteforward=0
+/usr/sbin/no -p -o ipsrcrouteforward=0
+/usr/sbin/no -p -o ipsrcrouterecv=0
+/usr/sbin/no -p -o ipsrcroutesend=0
+/usr/sbin/no -p -o nonlocsrcroute=0
+/usr/sbin/no -p -o tcp_pmtu_discover=0
+/usr/sbin/no -p -o udp_pmtu_discover=0
+/usr/sbin/no -p -o delayack=3
+/usr/sbin/no -p -o delayackports={80,443,81,8080,8888}
+/usr/sbin/no -p -o tcp_sendspace=131072
+/usr/sbin/no -p -o tcp_recvspace=65536
+/usr/sbin/no -p -o udp_recvspace=524288
+/usr/sbin/no -p -o udp_sendspace=65536
+/usr/sbin/no -p -o sack=0
+/usr/sbin/no -p -o tcp_newreno=1
+ 
+#***************************************
+showstep "Disabling NFS.." ;echo
+cp /etc/rc.nfs /etc/rc.nfs.orig
+ex /etc/rc.nfs <<\EOT 2>/dev/null
+/END_TAG
+ 
+i
+ 
+exit 0
+.
+wq
+EOT
+ 
+#***************************************
+showstep "Configuring syslog.." ;echo
+touch /var/adm/syslog
+cp /etc/syslog.conf /etc/syslog.conf.orig
+fe /root/syslog.conf && cp /root/syslog.conf /etc/syslog.conf
+cd /; refresh -s syslogd
+ 
+ 
+ 
+#***************************************
+showstep "Configuring ntp.." ;echo
+################################################
+#broadcastclient
+#driftfile /etc/ntp.drift
+#tracefile /etc/ntp.trace
+#server time.jefferson.pjm.com prefer
+#server time.milford.pjm.com
+################################################
+cp /etc/ntp.conf /etc/ntp.conf.orig
+cp /etc/rc.tcpip /etc/rc.tcpip.orig
+case $NET in
+172.23.*)  echo "$HOSTNAME is on $NET network";
+        T1="server time.milford.pjm.com prefer";
+        T2="server time.jefferson.pjm.com";;
+*)  echo "$HOSTNAME is on $NET network (not-Milford hopefully)";
+        T1="server time.jefferson.pjm.com prefer";
+        T2="server time.milford.pjm.com";;
+esac
+# The lines below are default (I think)
+#broadcastclient
+#driftfile /etc/ntp.drift
+#tracefile /etc/ntp.trace
+cat - <<EOT >> /etc/ntp.conf
+$T1
+$T2
+EOT
+MYTIMESERV=`echo $T1 | awk '{print $2}'`
+ex /etc/rc.tcpip <<\EOT 2>/dev/null
+/NTP
+ 
+i
+/usr/sbin/ntpdate -b $MYTIMESERV
+.
+/start
+s/#//
+wq!
+EOT
+cd /; startsrc -s xntpd
+ 
+#***************************************
+showstep "Unconfiguring/Stopping muxatmd.." ;echo
+ex /etc/rc.tcpip <<\EOT 2>/dev/null
+/muxatmd
+ 
+s/^/#/
+wq
+EOT
+stopsrc -s muxatmd
+rm /var/tmp/muxatmd.log
+ 
+#***************************************
+showstep "Configuring inetd.." ;echo
+cp /etc/inetd.conf /etc/inetd.conf.orig
+chsubserver -d -v time -p tcp
+chsubserver -d -v time -p udp
+chsubserver -d -v daytime -p tcp
+chsubserver -d -v daytime -p udp
+chsubserver -d -v ntalk -p udp
+chsubserver -d -v kshell -p tcp
+chsubserver -d -v klogin -p tcp
+chsubserver -d -v shell -p tcp
+chsubserver -d -v telnet -p tcp
+chsubserver -d -v login -p tcp
+chsubserver -d -v exec -p tcp
+#chsubserver -c -v ftp -p tcp6 -G '/usr/sbin/ftpd    ftpd -l -k'
+chsubserver -d -v ftp -p tcp
+chsubserver -d -v wsmserver -p tcp
+chsubserver -d -v caa_cfg -p tcp
+ 
+cd /; refresh -s inetd
+ 
+ 
+ 
+##################
+# Fixing inittab #
+##################
+showstep "Fixing inittab.." ;echo
+stopsrc -s writesrv
+stopsrc -s qdaemon
+stopsrc -s uprintfd
+stopsrc -g nfs
+ 
+rmitab naudio
+rmitab mkatmpvc
+rmitab atmsvcd
+rmitab piobe
+rmitab qdaemon
+rmitab writesrv
+rmitab uprintfd
+ 
+ 
+ 
+################
+# Fix crontabs #
+################
+showstep "Fixing scheduled jobs (cron/at).." ;echo
+chown root:cron /var/spool/cron/crontabs/*
+chmod 600 /var/spool/cron/crontabs/*
+cat - <<EOT > /var/adm/cron/at.deny
+ 
+ 
+ 
+ 
+EOT
+cat - <<EOT > /var/adm/cron/cron.deny
+ 
+ 
+ 
+EOT
+ 
+ 
+ 
+ 
+########################
+# Fix accounting stuff #
+########################
+showstep "Configuring accounting.." ;echo
+[ ! -d /var/adm/acct/nite ] && mkdir /var/adm/acct/nite
+[ ! -d /var/adm/acct/sum ] && mkdir /var/adm/acct/sum
+chown -R adm:adm /var/adm/sa /var/adm/acct/nite /var/adm/acct/sum
+chmod 775 /var/adm/sa /var/adm/acct/nite /var/adm/acct/sum
+cp -p /var/spool/cron/crontabs/adm /root/adm_crontab.orig
+echo '0 8-17 * * 1-5 /usr/lib/sa/sa1 1200 3 &' >>/var/spool/cron/crontabs/adm
+echo '0 * * * 0,6 /usr/lib/sa/sa1 &' >>/var/spool/cron/crontabs/adm
+echo '0 18-7 * * 1-5 /usr/lib/sa/sa1 &' >>/var/spool/cron/crontabs/adm
+echo '5 18 * * 1-5 /usr/lib/sa/sa2 -s 8:00 -e 18:01 -i 3600 -ubcwyaqvm &' >>/var/spool/cron/crontabs/adm
+echo;echo "Updated adm crontab as follows:";echo
+diff /root/adm_crontab.orig /var/spool/cron/crontabs/adm
+echo;echo "Backup of original adm crontab is in /root/adm_crontab.orig";echo
+cp /var/spool/cron/crontabs/adm /tmp/adm_cron && \
+chown adm /tmp/adm_cron && \
+/bin/su - adm -c crontab /tmp/adm_cron || \
+echo "Update of active adm cron jobs failed!";echo
+ 
+ 
+ 
+######################
+# Configure sendmail #
+######################
+showstep "Configuring sendmail..";echo
+cp /etc/mail/sendmail.cf /etc/mail/sendmail.cf.orig
+ex /etc/mail/sendmail.cf <<\EOT 2>/dev/null
+/^DS
+s/DS/DSsmtp:mail.pjm.com./
+/^DR
+s/DR/DRsmtp:mail.pjm.com./
+/^DH
+s/DH/DHsmtp:mail.pjm.com./
+/^DM
+s/DM/DMpjm.com/
+/PrivacyOptions
+s/authwarnings/goaway/
+wq
+EOT
+ 
+showstep "Modifying /etc/rc.tcpip .."
+ex /etc/rc.tcpip <<\EOT 2>/dev/null
+/qpi
+/start
+s/^/#/
+ 
+i
+/usr/lib/sendmail "-q${qpi}"
+.
+wq
+EOT
+# PArt TWo (Comment out snmpd start from rc.tcpip)
+ex ./rc.tcpip <<\EOT #2>/dev/null
+/SNMP
+/start
+s/^/#/
+ 
+wq
+EOT
+ 
+ 
+ 
+##########################
+# Configure /etc/aliases #
+##########################
+showstep "Configuring /etc/aliases..";echo
+ex /etc/mail/aliases <<\EOT 2>/dev/null
+/##
+/##
+ 
+d 100
+wq
+EOT
+cat - <<\EOT >> /etc/mail/aliases
+ 
+# Pretty much all the std email address point to "root"
+root:                           UnixSysSupt@pjm.com
+network:                        networkmngmt@pjm.com
+security:                       root,network
+ 
+# Alias for mailer daemon
+MAILER-DAEMON:                  postmaster
+ 
+# Following alias is required by the new mail protocol, RFC 822
+postmaster:                     root
+ 
+# General redirections for pseudo/system accounts.
+daemon:                         root
+bin:                            root
+sys:                            root
+adm:                            root
+uucp:                           root
+nuucp:                          root
+sshd:                           root
+snapp:                          root
+invscout:                       root
+lpd:                            root
+nobody:                         root
+guest:                          root
+imnadm:                         root
+ipsec:                          root
+ 
+#
+abuse:                          network
+bind:                           network
+bit-bucket:                     /dev/null
+dev-null:                       bit-bucket
+dumper:                         root
+ftp:                            root
+ftp-bugs:                       ftp
+games:                          root
+hostmaster:                     root
+httpd:                          webmaster
+kmem:                           root
+ldap:                           root
+mailnull:                       postmaster
+man:                            root
+manager:                        root
+msgs:                           root
+news:                           root
+noc:                            root
+operator:                       root
+pop:                            root
+smmsp:                          postmaster
+system:                         root
+toor:                           root
+tty:                            root
+usenet:                         news
+webmaster:                      root
+www:                            webmaster
+xten:                           root
+ 
+ 
+#
+# PJM aliases
+#
+enr:                            InfoSec@pjm.com
+enrftp:                         InfoSec@pjm.com
+mqm:                            root
+oracle:                         DataBase@pjm.com
+runaudit:                       security
+ulockadm:                       root
+ 
+ 
+ 
+# Alias to which SSA related warnings are mailed
+ssa_adm:                        root
+ 
+EOT
+newaliases
+showstep "Restarting sendmail..";echo
+stopsrc -s sendmail
+cd /; /usr/lib/sendmail -q30m
+ 
+ 
+ 
+##################
+# Configure MOTD #
+##################
+showstep "Setting MOTD..";echo
+cp /root/stdimg_motd /etc/motd
+ 
+ 
+ 
+#######################
+# Configure login.cfg #
+#######################
+showstep "Modifying login.cfg..";echo
+cp -p /etc/security/login.cfg /etc/security/login.cfg.orig
+sed "s/_HOSTNAME_/$HOST/g" /root/stdimg_login.cfg >/etc/security/login.cfg
+diff /etc/security/login.cfg /etc/security/login.cfg.orig
+echo
+ 
+ 
+ 
+################################
+# Add non standard filesystems #
+################################
+showstep "Adding pjm special filesystems.."
+mklv -y maintlv -t jfs2 rootvg 1
+crfs -v jfs2 -d /dev/maintlv -A yes -m '/maint'
+chfs -a size=2G /maint
+mount /maint && chown root:rootprvl /maint && chmod 775 /maint
+echo
+df -v -k
+ 
+ 
+ 
+####################
+# Setup /usr/local #
+####################
+showstep "Creating /usr/local filesystem.."
+mklv -y usrlocallv -t jfs2 rootvg 1
+crfs -v jfs2 -d /dev/usrlocallv -A yes -m '/usr/local'
+chfs -a size=512M /usr/local
+echo
+showstep "Saving contents of /usr/local.."
+ls -l /usr/local
+echo
+tar cvf /maint/usrlocal.tar /usr/local && rm -rf /usr/local/*
+mount /usr/local
+tar xvf /maint/usrlocal.tar;echo
+df -v -k /usr/local
+ 
+ 
+ 
+############################################################
+# Add nmon ** AS OF TL9 NMON comes with bos.perf.tools **  #
+############################################################
+#showstep "Installing and configuring nmon.."
+mkdir -p /maint/perf_data
+fe /root/stdimg_purge_nmon.sh && cp -p /root/stdimg_purge_nmon.sh /root/purge_nmon.sh
+chmod 755 /root/purge_nmon.sh
+ 
+ 
+ 
+####################
+# Setup Control-SA #
+####################
+showstep "Installing Control-SA.." ;echo
+/root/setupCSA
+ 
+ 
+ 
+##################
+# Setup Arcsight #
+##################
+showstep "Configuring syslog for ArcSight.." ;echo
+/root/setupArcsight
+ 
+ 
+ 
+###################################
+# Setup SNMPD (Replaced 20100615) #
+###################################
+showstep "Configuring SNMPD Community String in legacy snmpd.conf file.." ;echo
+cp -p /etc/snmpd.conf /etc/snmpd.conf.orig
+cp -p /etc/snmpdv3.conf /etc/snmpdv3.conf.orig
+fe /root/stdimg_snmpdv3.conf && cp -p /root/stdimg_snmpdv3.conf /etc/snmpdv3.conf && chmod 640 /etc/snmpdv3.conf
+fe /root/stdimg_snmpd.conf && cp -p /root/stdimg_snmpd.conf /etc/snmpd.conf && chmod 640 /etc/snmpd.conf
+stopsrc -s snmpd && startsrc -s snmpd
+ 
+ 
+ 
+#################
+# Setup nCircle #
+#################
+showstep "Configuring nCircle.." ;echo
+mkuser id=108 pgrp=users groups=users,rootprvl secmon
+chuser gecos="nCircle CCM Robot Account" secmon
+chuser account_locked=false expires=0 loginretries=0 maxage=0 secmon
+/root/setpasswd secmon 9nCEJYVlqFuWk
+mkdir ~secmon/.ssh
+chmod 700 ~secmon/.ssh
+chown secmon.users ~secmon/.ssh
+cat - <<EOT > ~secmon/.ssh/authorized_keys
+ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAgEAp4GzQlL3nKqmUEjNf+siILjEorv+XZq/Nvj20doWBAzOGQXjX9NLnOqlmD/AeUfogO+kD2mM/5dcUq/cIHWXxb9bXNU1hk08UxLpC1OTWY/czMzf1aag3TL/RlOQR7zpPgc4fkLrWiyrLi6fLrxvdShyG3K/qMdkt3BYcJdX2CIKd61NfF7sglPCMFux9xzpPnVC0o2TsYE6YAuN5M+THeD7a5+xLupk6NdcD8pATRYYJRAgVZLaM48LrMMzdb7j6V+MR2cs4UfvQUTi820eLLCPE8lc/tG1odoZ1iemggybzcG9KL2yfx+6Of81L6x/UYsubEWjiqyjpy5j8hzKQpkfMGeQ100Hy9MKXpZx01e5fDUSohF8aE43IQ1mK8tUV93yqYOim0xmdU9HTzaR/xxcB7RnVKhAqTHFJU8x9xF1bm94b9i/nsb7WMAUX0salls/O8WV+TKcTShM2S950l15aXOAjtmS8mhcoQ30LvMiIIKYxsVLGv1K/iwUEdbTvCa06NMpKd/ExiGLLMXVU3MXo0ogrslA7u5d/eJqLIsnPyAfmpt31HwmjwAjNeiKrCUdAfCLL2ugnbalrYgwMujZ+nnAsnV0XjhAGGbJQb/nwqNZFUzcolC1qa7chDzwbC9Q++zGVmNhUoD4BRg9iN/1rS88tVNghsKiiJKVEbc= secmon@etc01ilp
+EOT
+ 
+ 
+ 
+###########################################
+# Setup Mail checkin script and buildinfo #
+###########################################
+showstep "Setting up mail check script and buildinfo.sh ..";echo
+fe /root/stdimg_mailCheckin.sh && cp /root/stdimg_mailCheckin.sh ~perfmon/mailCheckin.sh
+chown perfmon:perf ~perfmon/mailCheckin.sh
+fe /root/stdimg_buildinfo.sh && cp /root/stdimg_buildinfo.sh ~perfmon/buildinfo.sh
+chown perfmon:perf ~perfmon/buildinfo.sh
+chmod +x ~perfmon/buildinfo.sh
+fe /root/perfmon_cron && echo "Adding cron entries for mailCheckin.sh and buildinfo.sh .."
+su - perfmon -c crontab /root/perfmon_cron
+ 
+ 
+ 
+###################################
+# Setup AIX auditing (Pauls mods) #
+###################################
+showstep "Setting up auditing..";echo
+echo "Copying files to /etc/security/audit.."
+for f in bincmds config events objects streamcmds
+do
+                fe /root/audit_files/$f && cp /root/audit_files/$f /etc/security/audit || echo "Error: audit file $f not found !"
+                fe /etc/security/audit/$f && chown root:audit /etc/security/audit/$f
+done
+chmod 640 /etc/security/audit/bincmds
+chmod 660 /etc/security/audit/config
+chmod 660 /etc/security/audit/events
+chmod 640 /etc/security/audit/objects
+chmod 640 /etc/security/audit/streamcmds
+fe /root/audit_files/sbin/PJMauditnotify.sh && cp /root/audit_files/sbin/PJMauditnotify.sh /usr/sbin
+[ $? -ne 0 ] && echo "Error: audit script PJMauditnotify.sh not found !"
+chown root:system /usr/sbin/PJMauditnotify.sh && chmod 755 /usr/sbin/PJMauditnotify.sh
+fe /root/audit_files/sbin/PJMauditstream.sh && cp /root/audit_files/sbin/PJMauditstream.sh /usr/sbin
+[ $? -ne 0 ] && echo "Error: audit script PJMauditstream.sh not found !"
+chown root:system /usr/sbin/PJMauditstream.sh && chmod 755 /usr/sbin/PJMauditstream.sh
+fe /root/audit_files/init.d/auditing && cp /root/audit_files/init.d/auditing /etc/rc.d/init.d
+[ $? -ne 0 ] && echo "Error: audit init script auditing not found !"
+chown root:system /etc/rc.d/init.d/auditing && chmod 755 /etc/rc.d/init.d/auditing
+echo "Adding auditstream subsystem .."
+mkssys -p /usr/sbin/PJMauditstream.sh -s auditstream -u root -S -n 15 -f 9 -R
+echo "Adding Notify Method .."
+mknotify -n auditstream -m /usr/sbin/PJMauditnotify.sh
+echo "performing audit shutdown"
+audit shutdown
+echo "performing audit start"
+audit start
+echo "running: startsrc -s auditstream"
+startsrc -s auditstream
+echo "Updating start/stop scripts in /etc/rc.d/rc2.d"
+rm -f /etc/rc.d/rc2.d/Sauditing /etc/rc.d/rc2.d/Kauditing >/dev/null 2>&1
+ln -sf /etc/rc.d/init.d/auditing /etc/rc.d/rc2.d/S99auditing
+ln -sf /etc/rc.d/init.d/auditing /etc/rc.d/rc2.d/K99auditing
+echo "Cleaning audit from inittab"
+rmitab "audit"
+showstep "Completed audit setup..";echo
+ 
+ 
+ 
+#####################################
+# Setup SNMPv3 w/ encrypt & authent #
+#####################################
+# TEMPORARILY REMOVED SNMPV3 - 20121002
+#showstep "Configuring SNMPV3 ..";echo
+#/root/configure_snmpv3.sh
+#showstep "Completed SNMPV3 setup..";echo
+ 
+ 
+ 
+##################################################################################
+# Reconfigure syslogd subsystem not to accept remote syslog (pass '-R' argument) #
+##################################################################################
+showstep "Fixing syslog so that it does not accept remote logs..";echo
+chssys -s syslogd -a '-r'
+ 
+ 
+ 
+#########################################
+# Remove evil filesets and users/groups #
+#########################################
+showstep "Removing evil filesets and associated users/groups..";echo
+installp -u -w bos.net.snapp
+installp -u -w invscout.com invscout.ldb invscout.msg.en_US.rte invscout.rte
+installp -u -w bos.msg.en_US.net.ipsec bos.net.ipsec.keymgt \
+ bos.net.ipsec.rte bos.net.ipsec.keymgt bos.net.ipsec.rte
+# Uninstall system director for now. 20120216
+installp -gu sysmgt.pconsole.rte
+installp -u bos.esagent
+installp -u cas.agent DirectorCommonAgent artex.base.agent
+installp -gu sysmgt.cim.providers.metrics sysmgt.cim.providers.osbase sysmgt.cim.smisproviders.hhr sysmgt.cim.smisproviders.vblksrv sysmgt.cimserver.pegasus.rte sysmgt.cim.providers.scc sysmgt.cim.providers.smash sysmgt.cim.smisproviders.hba_hdr
+installp -u sysmgt.cimserver.pegasus.rte
+# Uninstall cluster aware AIX sw
+installp -u bos.cluster.rte
+rm -rf /var/adm/invscout/
+rm -rf /usr/lpp/bos.net/inst_root/var/snapp
+rm -rf /usr/lpp/bos.net/inst_root/etc/ipsec
+rmgroup invscout
+rmgroup snapp
+rmuser -p pconsole
+ 
+ 
+ 
+#################
+# Setup devices #
+#################
+showstep "Configuring tty and sys0 devices"
+echo "Checking for tty.."
+lsattr -El tty0 >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+        echo "Configuring tty.." ;echo
+        chdev -l tty0 -a term=ibm3151
+else
+        echo "No tty on system (probably vty).."
+fi
+echo "Configuring system properties.." ;echo
+chdev -l sys0 -a iostat=true                    # maintain i/o history
+chdev -l sys0 -a maxuproc=2048                  # per user processes
+chdev -l sys0 -a autorestart=true               # reboot after crash
+ 
+ 
+ 
+######################################
+# Remove inittab entry for firstBoot #
+######################################
+showstep "Removing inittab entry for firstBoot."
+rmitab firstBoot
+ 
+ 
+ 
+#################################
+# Generate ssh keys if required #
+#################################
+showstep "Generating hostkeys for sshd"
+rm /etc/ssh/ssh_host_rsa_key
+rm /etc/ssh/ssh_host_dsa_key
+ssh-keygen -q -t rsa -b 4096 -N '' -f /etc/ssh/ssh_host_rsa_key
+ssh-keygen -q -t dsa -b 1024 -N '' -f /etc/ssh/ssh_host_dsa_key
+startsrc -s sshd
+ 
+ 
+ 
+#####################
+# Do Kerberos stuff #
+#####################
+showstep "Configuring kerberos client"
+/usr/sbin/config.krb5 -C -r UNIX.PJM.COM -d pjm.com -c kdc01ilp.pjm.com -s kdc01ilp.pjm.com
+fe /root/krb5.conf && cp /root/krb5.conf /etc/krb5/
+cp /etc/ssh/sshd_config /etc/ssh/sshd_config.pre_krb5
+cat /etc/ssh/sshd_config | sed -e 's/#KerberosAuthentication no/KerberosAuthentication yes/' -e 's/#KerberosTicketCleanup yes/KerberosTicketCleanup yes/' -e 's/#GSSAPIAuthentication no/GSSAPIAuthentication yes/' -e 's/#GSSAPICleanupCredentials yes/GSSAPICleanupCredentials yes/' > /etc/ssh/sshd_config.krb5
+cp /etc/ssh/sshd_config.krb5 /etc/ssh/sshd_config
+stopsrc -s sshd; sleep 2 ; startsrc -s sshd
+# Update /usr/lib/security/methods.cfg
+echo " " >> /usr/lib/security/methods.cfg
+echo "KRB5: " >> /usr/lib/security/methods.cfg
+echo "        program = /usr/lib/security/KRB5" >> /usr/lib/security/methods.cfg
+echo "        program_64 = /usr/lib/security/KRB5_64" >> /usr/lib/security/methods.cfg
+echo "        options = authonly,is_kadmind_compat=no" >> /usr/lib/security/methods.cfg
+echo " "  >> /usr/lib/security/methods.cfg
+echo "KRB5files: " >> /usr/lib/security/methods.cfg
+echo "        options = db=BUILTIN,auth=KRB5" >> /usr/lib/security/methods.cfg
+echo " " >> /usr/lib/security/methods.cfg
+# Send support center an email to do Kerberos procedure (As Dom D. for now)
+SERVER=`hostname -s`
+mail -r "dalesd@pjm.com" -s "Set up Kerberos keytab for $SERVER" pjm@dsscorp.com << EOT
+Last Name=DAlessandro
+First Name=Dominic
+Email Address=dalesd@pjm.com
+Office Phone=610-666-2268
+Company=PJM
+Division=Information Technology Svc
+Department=Platform Operations
+Site=Norristown
+Building=Technology Center
+ 
+Contact Method=External System
+Impact=3 - Medium
+User Priority=3 - Medium
+Type=Enterprise Infrastructure
+Sub Type=ei issue
+Detail=server
+Assignees="PJM-AIX"
+Tech Notes=Template
+Status=Open
+ 
+$SERVER was recently deployed. Please add this host to the Kerberos database and copy its keytab.
+> krbtool addhost $SERVER
+> scp /tmp/KEYTABS/$SERVER.keytab $SERVER:/maint
+> sudossh $SERVER mv /maint/$SERVER.keytab /etc/krb5/krb5.keytab
+EOT
+ 
+ 
+ 
+#####################
+# Setup Admin Users #
+#####################
+showstep "Invoking makeAdmins.." ;echo
+/root/makeAdmins
+ 
+ 
+###################
+# Fix root mayday #
+###################
+showstep "Fixing roots sugroups"
+chuser sugroups=mayday,rootprvl root
+ 
+ 
+##########################
+# Fix AIX 7.1 ODM issues #
+##########################
+showstep "Checking for AIX 7.1 ODM issue.."
+if [ `oslevel` = "7.1.0.0" ]; then
+echo "Installed AIX 7, cleaning iocp0 and cluster0 devices from ODM.."
+odmdelete -q name=iocp0 -o CuDv
+# - odmget -q name=iocp0 CuDv
+odmdelete -q name=cluster0 -o CuDv
+fi
+ 
+ 
+ 
+#########################
+# Send "host up" email. #
+#########################
+showstep "Sending notification email that `hostname -s` is up.."
+UPMAIL=/root/notify_mail
+lparstat | grep ^System | awk '{print $3}'| cut -d '=' -f 2 | read MTYPE
+if [ $MTYPE = "Dedicated" ]; then
+        LPARSTATUS='is *not* an LPAR.'
+else
+        LPARSTATUS='is an LPAR.'
+fi
+echo >>$UPMAIL
+echo "`hostname -s` has been installed using the standard image and is online" >>$UPMAIL
+echo >>$UPMAIL
+echo "`hostname -s` $LPARSTATUS" >>$UPMAIL
+echo >>$UPMAIL
+echo "`lsattr -El sys0 -a modelname -a systemid | awk '{print $1,$2}'`" >>$UPMAIL
+echo >>$UPMAIL
+echo `ifconfig -a` >>$UPMAIL
+echo >>$UPMAIL
+echo `netstat -rn` >>$UPMAIL
+echo >>$UPMAIL
+mail -s "`hostname -s` online" srvretunix@pjm.com <$UPMAIL
+ 
+ 
+ 
+####################################
+# Drop bread crumb (version) trail #
+####################################
+showstep "Copying change log"
+fe /root/CHANGELOG.pjm.custom && cp /root/CHANGELOG.pjm.custom /root/pjm_image.changelog || echo "Change log file (/root/CHANGELOG.pjm.custom) not found"
+ 
+ 
+ 
+#################################
+# Remove pjm.custom.rte fileset #
+#################################
+installp -u -w pjm.custom.rte
+ 
+ 
+ 
+#############################
+# Print date at end of log. #
+#############################
+showstep "Image script run `date`"
+showstep "$0 completed"
+exit
+ 
+ 
+ 
+#***************************************
+# To-Do / Latest updates..
+#***************************************
+# - TIVOLI INST/CONF ???
+# - Convert script so runnable by parts?
+# - Removed files from fileset :
+# -  /usr/local/etc/unlock_admins
+# -  /usr/local/etc/rotateLogs
+# -  /usr/local/bin/ulock
+# -  /root/setpasswd
+# - Above files removed in favor of copying temp files, \
+# - so that if pjm_custom.rte fileset is removed, it's no big deal.
+# - Added files to fileset :
+# -  /root/stdimg_unlock_admins
+# -  /root/stdimg_rotateLogs
+# -  /root/stdimg_ulock
+# -  /root/stdimg_setpasswd
+# - Modified script to copy /root/stdimg_* to approp. locations
+# - ***********************************
+# - ** Changes on 20080213 ************
+# - Added SNMP Community String changes.
+# - Fixed ulockadm for local logins.
+# - Added nCircle user/perms w/ sudo
+# - Removed ESM
+# - ***********************************
+# - ** Changes on 20080430 ************
+# - Updated nmon to version 12e (includes p6 support + other changes)
+# - Turned off SNMPD (For now..)
+# - Added mail check script.
+# - Updated LSOF RPM for AIX 5.3 (old version cored)
+#End Version 20080430 Changes
+#***************************************
+# - ***********************************
+# - ** Changes on 20080909 ************
+# Removed ESM filesystem.
+# Removed patchlink.
+# Note: using lpp_source/spot for 53tl8sp2
+#End Version 20080909 Changes
+#***************************************
+# - ** Changes on 20081113 ************
+# Added admin keys
+# Added nmon purge script,cronjob
+# Changed NIM script (not part of package) to remove pjm.custom.rte fileset
+#End Version 20081113 Changes
+#***************************************
+# 20090316 -- Changed def group (user) to be users (was usr)
+#          -- Correct home dir permissions for admins
+#          -- Removed Frank, Added Dom.
+#                -- Added back patchlink fs
+#                -- Removed nmon tar as nmon is in bos.rte.perf as of TL9
+#          -- To-Do: patchlink install, drop version file in root
+#***************************************
+# 20090604 -- Added machine model & S/N to email (in NIM script)
+#                -- Added auditing (Les script/tar)
+#                -- Added textutils RPM (md5sum required by PatchLink)
+#                -- Added patchlink installer again..
+#                -- Added Java15 & Java15_64 (soon)
+#                -- Updated openssl & custom openssh:
+#                             (***OPENSSL IS NOW AN INSTALLP***)
+#                             (***OPENSSL RPM REMOVED FROM RPM BUNDLE***)
+#                             openssh.5.0.PJM.bff
+#                             openssl.base:0.9.8
+#                             openssl.license:0.9.8
+#                             openssl.base:0.9.8
+#                -- Updated misc:
+#                             rsync-3.0.4-1
+#                             popt-1.7-2
+#                             xlC.aix50.rte                  10.1.0.2
+#                             xlC.msg.en_US.rte              10.1.0.2
+#                             xlC.rte                        10.1.0.2
+#                             xlfrte                         12.1.0.3
+#                             xlfrte.aix53                   12.1.0.3
+#                             xlfrte.msg.en_US               12.1.0.3
+#***************************************
+# 20090604 -- Replaced auditing config w/ Pauls stuff
+#***************************************
+#***************************************
+# 20100615 --  Changes:
+# - Updated SNMPV3 config (uses encrypt & auth)
+# - Added buildinfo.sh to perfmon's home dir & cronjob
+# - Updated ulockadm & perfmon passwords
+# - Removed patchlink filesystem
+# - Removed /usr/local/Tivoli
+# - Increased /var to 1 GB
+# - Increased /users or /home (depending on what is there) to 512 MB
+# - Remove lg_dumplv
+# - Added Jim Smith
+#***************************************
+#***************************************
+# 20100927 --  Changes:
+# - Updated ulockadm & perfmon passwords (mbh departure)
+# - Updates for Milford DNS -- 172.23.32.95
+#***************************************
+#***************************************
+# 20101105 --  Changes:
+# - Updated ulockadm & perfmon passwords (again..can't recall why)
+# - Fixed process accounting setup
+# - Fixed issue with arcsight collector setup
+#***************************************
+#***************************************
+# 20110531 -- Changes:
+# - Minor change to setupArcsight script in event arcsight collector not found *
+# - Fixed syslog configuration not to accept remote syslog *
+# - Added user for Remedy *
+# - Sam's Spectrum profile change *
+# - Added Courion user *
+# - Added new LSOF installp package and removed RPM package (Broken) *
+#***************************************
+#***************************************
+# TO-DO / Deferred (not enough info)
+# - Update configuration for ArcSight (need new load balanced syslog names)
+# - Correct initial syslogd (**Use '-r' instead of '-R'**)
+# - Add ctsa user (ask Rob A.)
+#***************************************
+#***************************************
+# 20120214 -- Changes:
+# - added Rob Aro and Andy W to admins and keys
+# - Removed Sam Stahlback
+# - dropped Mouhcines keys (mod to ssh_keys.tar)
+# - Added NTP updates (redundant servers Milford+Jefferson)
+# - Incorporated Dom's log rotate RPMs + dependencies (coreutils, popt, logrotate)
+# - Removed file from fileset :
+# -  /root/stdimg_rotateLogs
+# - ***************************************************************************
+# - *Special note* The above is a change to the installp_bundle for RPMs and \
+# - *Special note* requires an update on each NIM server's lpp_source to \
+# - *Special note* include RPMs for coreutils, popt, and logrotate
+# - *Special note* The RPM for logrotate adds the jobs to rotate jobs
+# - ***************************************************************************
+# - Update syslog to point to per env config (e.g. syslog.ac1stage.pjm.com)
+# - For the above, e.g. '*.info  @syslog.ac2prod.pjm.com'
+# - Updated openssl, openssh (Sam S version) as per 2012/01 patch requirement:
+# - openssh.5.9.PJM.bff and openssl 0981800
+# - Updated ulockadm password.
+# - Added John Troy's account
+# - Added 'role:' config stanza to /etc/security/audit/config file (needed by AIX6)
+#***************************************
+# 20120501 -- Changes:
+# - Removed Rob Aro from admins/keys
+# - Added Justin Bleistein and Dan Terenick to admins/keys
+# - TO-DO: Add patch management's required patches to all server builds
+#***************************************
+# 20120521 -- Changes:
+# - -- Changes below moved from nim_script into pjm.custom --
+# - --- Added 'Remove evil filesets and users/groups' section 
+# - --- including: snapp,invscout,ipsec,director
+# - --- Added 'Setup devices' section
+# - --- including: tty, sys0 (iostat,maxuproc,autorestart)
+# - --- Added 'Host up email'
+# - --- Added rmitab to remove firstBoot from inittab
+# - --- Added uninstall of pjm.custom
+# - --- Moved home directories to /users instead of /home (blame Siemens)
+# - -- End of changes from nim_script --
+# - Added PID to logfile to make uniquely named
+# - Added date to end of logfile.
+# - Manually create host keys for Sam's sshd (keys don't work for some reason)
+#***************************************
+# 20120521 -- Changes:
+# - Uninstall some more Director junk (sysmgt.cim.*)
+# - Shut off cluster aware AIX (caa) in inetd section
+# - Removed cluster aware aix (clcomd++) sw
+#***************************************
+# 20120521 -- Changes:
+# - Fixed update to /etc/rc.tcpip, it was still running /usr/sbin/ntpdate -b against time.pjm.com
+# - updated above to update to local time server (Milford or Jefferson)
+#***************************************
+# 20120607 -- Changes:
+# - Added secmon's ssh key
+# - TO-DO: Update cust_pjm.sh to have image checking function
+# - and make it OK to run more than once
+#***************************************
+# 20120729 -- TO-DO
+# - Perm changes:
+# - Add userid for vulnscan & keys.
+# - Add 172.23.68/24 to arcsight.conf
+# - Figure out what to do with SNMPv3 w/ Auth/encryption for AIX 7 / AIX 6
+#***************************************
+# 20120920 -- Changes:
+# - Update ulockadm password
+# - Update secmon password
+#***************************************
+# 20121002 -- Changes:
+# - Added Kerberos stuff per Dom/John Troy
+# - Kerberos stuff includes fileset in lpp_source
+# - Remove SNMPv3 Stuff for now
+# - Added John Troy ssh keys
+# - Updated MOTD
+# - Added Rich Dale's account
+#***************************************
+# 20130103 -- Changes:
+# Fixed ODM issues identified in AIX 7.1 image.
+# Updated /etc/security/login.cfg herald for motd changes
+#***************************************
+# 20130221 -- Changes:
+# Added Chris Metzger in makeAdmins, removed Tahir Saeed
+# Added new pw complexity settings avail in aix 7.1
+#  -- min alpha, mindigit, minspecialchar
+#***************************************
+# 20130327 -- Changes:
+# Fixed /etc/krb5/krb5.conf (copy file added to pjm.custom.rte package)
+# Added vBUCC IP subnet to arcsight.conf for syslog configuration
+# Removed Jim Smith ;(
+# TO-DO
+# update openssh to be latest in lpp_src
+#***************************************
+# 20130513 -- Changes:
+# MOTD updates as per legal
+# also stdimg_login.cfg update
+# To-Do: TSM updates for LPP_SOURCES everywhere..
+# Don't use 'aix' as a group anymore (was default), use rootprvl
+# Removed the account of Les Reisz
+#***************************************
+# 20130708 -- Changes:
+# - Updated to include mayday group, sos account
+# - Removed local passwords
+# - Updated root's su group to mayday
+# - Updated tsm client
+#***************************************
+# 20130806
+# - Updated syslog file

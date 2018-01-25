@@ -1,0 +1,294 @@
+#!/bin/sh
+
+VERSION=0.43
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+unset IFS ENV CDPATH BASH_ENV
+umask 027
+umask 022
+
+exec 2>/dev/null
+
+
+BASEDIR="/tmp/info.$$"
+LOGDIR="${BASEDIR}/`hostname -s`"
+TAR="/tmp/info.tar"
+OS="`uname -s`"
+
+[ ! -d ${BASEDIR} ] && mkdir ${BASEDIR}
+[ ! -d ${LOGDIR} ] && mkdir ${LOGDIR}
+
+
+echo "$VERSION" > ${LOGDIR}/version
+date > ${LOGDIR}/date
+hostname > ${LOGDIR}/hostname
+uname -a > ${LOGDIR}/uname-a
+cp /etc/passwd /etc/group ${LOGDIR}
+rpm -q -a --last | sort > ${LOGDIR}/rpm-qa ifconfig -a > ${LOGDIR}/ifconfig-a netstat -rn > ${LOGDIR}/netstat-rn df -Pk > ${LOGDIR}/df-k ps -ef > ${LOGDIR}/ps-ef ps auxwww > ${LOGDIR}/ps-auxwww uptime > ${LOGDIR}/uptime echo | dsmc query filespace > ${LOGDIR}/dsmc-q-f who > ${LOGDIR}/who finger > ${LOGDIR}/finger cp /etc/exports ${LOGDIR} mkdir ${LOGDIR}/sar
+
+if [ -f "/opt/Sonic/Sonic/MQ7.6/product.properties" ]; then
+     SONICENV="/opt/Sonic/Sonic/MQ7.6/bin/setenv"
+     SONICFS="/opt/Sonic /opt/claimcheck /opt/claimcheck/filerepository /var/log/sonic /var/adm/sonic"
+     mkdir ${LOGDIR}/sonic
+     grep SONICMQ_JRE= $SONICENV > ${LOGDIR}/sonic/mq_jre
+     if [ -f /opt/Sonic/Actional/ActionalAgent/product.info ]; then
+             echo "InstalledIn: /opt/Sonic/Actional/ActionalAgent" > ${LOGDIR}/sonic/actional.info
+             grep BuildNumber /opt/Sonic/Actional/ActionalAgent/product.info >> ${LOGDIR}/sonic/actional.info
+     elif [ -f /opt/Sonic/Actional/product.info ]; then
+             echo "InstalledIn: /opt/Sonic/Actional" > ${LOGDIR}/sonic/actional.info
+             grep BuildNumber /opt/Sonic/Actional/product.info >> ${LOGDIR}/sonic/actional.info
+     fi
+     for FS in $SONICFS; do
+          printf "%s\t%s\n" "$FS" "`df -mP $FS | tail -1`"  >> ${LOGDIR}/sonic/filesystems
+     done
+(
+        . $SONICENV
+        $SONICMQ_JRE -cp $SONICMQ_HOME/lib/sonic_Client.jar progress.message.zclient.Version > ${LOGDIR}/sonic/version
+)
+fi
+
+# Pull java information
+ls -al /usr/java* > ${LOGDIR}/usr-java
+ps -ef | grep -v grep | grep -i java > ${LOGDIR}/running-java
+
+
+if [ -f "/var/mmfs/gen/mmfs.cfg" ]; then
+     mkdir ${LOGDIR}/gpfs    
+     cat /var/mmfs/gen/mmfs.cfg | grep 'clusterName' | awk '{print $2}'  > ${LOGDIR}/gpfs/cluster_name
+     cat /var/mmfs/gen/mmfs.cfg | grep 'clusterId' > ${LOGDIR}/gpfs/information
+     cat /var/mmfs/gen/mmfs.cfg | grep 'autoload' >> ${LOGDIR}/gpfs/information
+     cat /var/mmfs/gen/mmfs.cfg | grep 'uidDomain' >> ${LOGDIR}/gpfs/information
+     cat /var/mmfs/gen/mmfs.cfg | grep 'minReleaseLevel' | awk '{print $1, $3}'  >> ${LOGDIR}/gpfs/information
+     cat /var/mmfs/gen/mmfs.cfg | grep 'tiebreakerDisks' >> ${LOGDIR}/gpfs/information
+     cat /var/mmfs/gen/mmfs.cfg | grep 'minMissedPingTimeout' >> ${LOGDIR}/gpfs/information
+     cat /var/mmfs/gen/mmfs.cfg | grep 'maxMissedPingTimeout' >> ${LOGDIR}/gpfs/information
+     spaceloc=`egrep "%%home%%" /var/mmfs/gen/mmsdrfs | egrep SG_ETCFS | egrep ":2:" | awk '{ print $NF }'`
+     df -k $spaceloc >> ${LOGDIR}/gpfs/spaceloc
+     spacerem=`egrep -v "%%home%%" /var/mmfs/gen/mmsdrfs | egrep SG_ETCFS | egrep ":1:" | cut -d: -f5`
+     df -k /dev/remote_${spacerem#?} >> ${LOGDIR}/gpfs/spacerem
+     if ps -ef | grep /usr/lpp/mmfs/bin/aix64/mmfsd64 | grep -v grep > /dev/null ; then echo "yes"; else echo "no"; fi  > ${LOGDIR}/gpfs/running;
+     cat /var/mmfs/gen/mmfsNodeData | tr -d ":" | tail -7c > ${LOGDIR}/gpfs/servcli
+    
+fi
+    
+
+case "$OS" in
+  Linux)
+    cp /etc/issue ${LOGDIR}
+    egrep -- '(redhat|sles)-release' ${LOGDIR}/rpm-qa > ${LOGDIR}/release
+    cp /tmp/sysinfo.out ${LOGDIR}
+    cp /tmp/dmidecode.out ${LOGDIR}
+    swapon -s > ${LOGDIR}/swapon-s
+    sysctl -a > ${LOGDIR}/sysctl-a 2>/dev/null
+    cat /proc/meminfo > ${LOGDIR}/proc-meminfo
+    cat /proc/cpuinfo > ${LOGDIR}/proc-cpuinfo
+    cat /proc/pci > ${LOGDIR}/proc-pci
+    cat /proc/modules > ${LOGDIR}/proc-modules
+    cat /proc/ioports > ${LOGDIR}/proc-ioports
+    cp /var/log/sa/sar* ${LOGDIR}/sar
+    cp /opt/tivoli/tsm/client/ba/bin/dsm.sys /opt/tivoli/tsm/client/ba/bin/dsm.opt ${LOGDIR}     #should be there, but maybe not?
+#    free
+#    cp /var/log/dmesg ${LOGDIR}
+
+
+    DMESGDIR="dmesg"
+    [ ! -d "${DMESGDIR}" ] && mkdir ${DMESGDIR}
+
+    test -f ${DMESGDIR}/dmesg.6 && mv ${DMESGDIR}/dmesg.6 ${DMESGDIR}/dmesg.7
+    test -f ${DMESGDIR}/dmesg.5 && mv ${DMESGDIR}/dmesg.5 ${DMESGDIR}/dmesg.6
+    test -f ${DMESGDIR}/dmesg.4 && mv ${DMESGDIR}/dmesg.4 ${DMESGDIR}/dmesg.5
+    test -f ${DMESGDIR}/dmesg.3 && mv ${DMESGDIR}/dmesg.3 ${DMESGDIR}/dmesg.4
+    test -f ${DMESGDIR}/dmesg.2 && mv ${DMESGDIR}/dmesg.2 ${DMESGDIR}/dmesg.3
+    test -f ${DMESGDIR}/dmesg.1 && mv ${DMESGDIR}/dmesg.1 ${DMESGDIR}/dmesg.2
+    test -f ${DMESGDIR}/dmesg.0 && mv ${DMESGDIR}/dmesg.0 ${DMESGDIR}/dmesg.1
+
+    dmesg > ${DMESGDIR}/dmesg.0
+
+    diff ${DMESGDIR}/dmesg.1 ${DMESGDIR}/dmesg.0 2>/dev/null \
+      | grep '>' > ${DMESGDIR}/diff
+    # %w returns a day of week like cron (0-6, sun-sat)
+    DAY="`date '+%w'`"                    # unrelated to the numbers above
+    if [ $DAY -eq 1 ]; then
+      diff ${DMESGDIR}/dmesg.3 ${DMESGDIR}/dmesg.0 2>/dev/null \
+        | grep '>' > ${DMESGDIR}/diff-weekend
+    fi
+    cp -r ${DMESGDIR} ${LOGDIR}
+
+     JBOSSDIR="/opt/jboss"
+     if [ -d $JBOSSDIR ]; then
+          mkdir ${LOGDIR}/jboss;
+          if [ -e "/etc/sysconfig/jboss_configs" ]; then
+               JBOSSCONF="/etc/sysconfig/jboss_configs"
+          elif [ -e "/etc/sysconfig/jboss" ]; then
+               JBOSSCONF="/etc/sysconfig/jboss"
+          fi
+          if [ $JBOSSCONF ]; then
+               for APP in `ls ${JBOSSCONF}`; do
+              
+    
+
+
+
+
+         
+              
+                    JBOSS_CFG=default
+                    NAMING_PORT=1099
+                    if [ -f ${JBOSSCONF} ]; then
+                         JBOSSSRC="${JBOSSCONF}"
+                    else
+                         JBOSSSRC="${JBOSSCONF}/${APP}"
+                    fi
+               if [ -r "${JBOSSSRC}" ]; then
+                         . "${JBOSSSRC}"
+              
+                    HTTPPORT=`expr $NAMING_PORT - 1099 + 8080`
+                   
+                    ps www -ujboss | grep "$JBOSS_CFG" > /dev/null
+                    [ "$?" -eq "0" ] && echo $JBOSS_CFG >> ${LOGDIR}/jboss/apps.running
+                        
+         
+               if grep -q "MAJORVER" ${JBOSSCONF}/$APP; then
+               version=`grep "JBOSS_HOME" ${JBOSSCONF}/$APP | head -1 | sed ';s/.*eap-//g' | tr -d [A-z] | sed -e 's/-.*//';`
+               else
+               version=`ls /opt/jboss/ | grep 'eap*' | egrep -o '[0-9].[0-9].*' | sort -n | head -1`
+               fi
+               if grep -q "MAJORVER" ${JBOSSCONF}/$APP; then
+              
+                    mannum=`grep "export PORTSET" ${JBOSSCONF}/$APP | tr -d '[A-z=]'`
+                    manport=`expr $mannum + 9999`
+
+               else
+                    manport="N/A"
+               fi
+               echo $APP $JBOSS_CFG $HTTPPORT $version $manport >> ${LOGDIR}/jboss/apps.http
+               else echo Cannot source "${JBOSSSRC}" >> ${LOGDIR}/jboss/errors
+               fi         
+done;    
+              
+          fi;
+     fi;
+        
+
+
+    ;;
+  AIX)
+    lslpp -Lcq > ${LOGDIR}/lslpp-Lcq
+    lscfg -vp > ${LOGDIR}/lscfg-vp
+    lsattr -El sys0 > ${LOGDIR}/sys0
+    no -a > ${LOGDIR}/no-a 2>/dev/null
+    getconf -a > ${LOGDIR}/getconf-a 2>/dev/null
+    prtconf > ${LOGDIR}/prtconf 2>/dev/null
+    cp /var/adm/sa/sar* ${LOGDIR}/sar
+    lsps -a > ${LOGDIR}/lsps-a
+    lparstat -i > ${LOGDIR}/lparstat-i
+    cp /etc/niminfo ${LOGDIR}
+    
+    if [ -d "/mksysb" ]; then
+                        for dir in `ls /mksysb/`;do
+                                if [ -d "/mksysb/$dir" ]; then
+                                        ls -rt /mksysb/$dir | grep '_' | tail -1 >> ${LOGDIR}/nim_mksysb
+      
+        fi
+        done
+        fi
+    
+
+    cp /usr/tivoli/tsm/client/ba/bin/dsm.sys /usr/tivoli/tsm/client/ba/bin/dsm.opt ${LOGDIR}     #should be there, but maybe not?
+
+    # capture some backup logs
+    if [ -d /maint/mksysb ]; then
+     i=0
+        mkdir ${LOGDIR}/backup
+        for log in `ls /maint/mksysb/ | tail -8`; do
+         # capture 4 most recent of each
+            lognum=`expr $i / 2`
+            logname=`echo $log | sed -e 's/[0-9]\{8\}/'$lognum'/'`
+            echo $log $logname >> ${LOGDIR}/backup/manifest
+            cp /maint/mksysb/${log} ${LOGDIR}/backup/${logname}
+            i=`expr $i + 1`
+        done
+    fi
+    if [ -d /maint/sysback ]; then
+       # cd /maint/sysback
+        i=0
+        [ -d ${LOGDIR}/backup ] ||  mkdir ${LOGDIR}/backup
+        for log in `ls /maint/sysback/*_sysback_*.out | awk -F/ '{print $NF}' | tail -4`; do
+            # capture 4 most recent logs
+            lognum=$i
+            logname=`echo $log | sed -e 's/[0-9]\{8\}/'$lognum'/'`
+            echo $log $logname >> ${LOGDIR}/backup/manifest
+            tail -1 /maint/sysback/${log} > ${LOGDIR}/backup/${logname}
+            i=`expr $i + 1`
+          done
+    fi
+
+    instfix -i > ${LOGDIR}/instfix-i
+    instfix -icq > ${LOGDIR}/instfix-icq
+    grep ML ${LOGDIR}/instfix-i | sort \
+      | grep -v AIX43 | tail -1 \
+      | sed -e 's/.* for \([^ ]*\) were .*/\1/' > ${LOGDIR}/aixlevel
+    grep ML ${LOGDIR}/instfix-i | sort | grep All \
+      | grep -v AIX43 | tail -1 \
+      | sed -e 's/.* for \([^ ]*\) were .*/\1/' > ${LOGDIR}/aixlevel-complete
+
+    oslevel -s > ${LOGDIR}/oslevel-s
+    lsattr -El sys0 > ${LOGDIR}/lsattr-Elsys0
+#    oslevel -r > ${LOGDIR/oslevel-r
+#    bootinfo -y > ${LOGDIR}/bootinfo -y          # Need root
+
+    lspv > ${LOGDIR}/lspv
+    lsvg > ${LOGDIR}/lsvg
+    lsvg -o > ${LOGDIR}/lsvg-o
+    for vg in `cat ${LOGDIR}/lsvg-o`; do
+      lsvg ${vg} > ${LOGDIR}/lsvg_${vg}
+      lsvg -l ${vg} > ${LOGDIR}/lsvg-l_${vg}
+    done
+
+
+    ERRPTDIR="errpt"
+    [ ! -d "${ERRPTDIR}" ] && mkdir ${ERRPTDIR}
+
+    test -f ${ERRPTDIR}/errpt.6 && mv ${ERRPTDIR}/errpt.6 ${ERRPTDIR}/errpt.7
+    test -f ${ERRPTDIR}/errpt.5 && mv ${ERRPTDIR}/errpt.5 ${ERRPTDIR}/errpt.6
+    test -f ${ERRPTDIR}/errpt.4 && mv ${ERRPTDIR}/errpt.4 ${ERRPTDIR}/errpt.5
+    test -f ${ERRPTDIR}/errpt.3 && mv ${ERRPTDIR}/errpt.3 ${ERRPTDIR}/errpt.4
+    test -f ${ERRPTDIR}/errpt.2 && mv ${ERRPTDIR}/errpt.2 ${ERRPTDIR}/errpt.3
+    test -f ${ERRPTDIR}/errpt.1 && mv ${ERRPTDIR}/errpt.1 ${ERRPTDIR}/errpt.2
+    test -f ${ERRPTDIR}/errpt.0 && mv ${ERRPTDIR}/errpt.0 ${ERRPTDIR}/errpt.1
+
+    errpt > ${ERRPTDIR}/errpt.0
+
+    diff ${ERRPTDIR}/errpt.1 ${ERRPTDIR}/errpt.0 2>/dev/null \
+      | grep '>' > ${ERRPTDIR}/diff
+    # %w returns a day of week like cron (0-6, sun-sat)
+    DAY="`date '+%w'`"                    # unrelated to the numbers above
+    if [ $DAY -eq 1 ]; then
+      diff ${ERRPTDIR}/errpt.3 ${ERRPTDIR}/errpt.0 2>/dev/null \
+        | grep '>' > ${ERRPTDIR}/diff-weekend
+    fi
+    cp -r ${ERRPTDIR} ${LOGDIR}
+
+
+
+    # HACMP - going away
+#    if [ -e /usr/sbin/cluster/clstat -a ! -f ".noclstat" ]; then
+#      echo q | TERM=vt100 /usr/sbin/cluster/clstat -a \
+#        | perl -pe 's/\e\[[\x20-\x2f\x30-\x3f]*[\x40-\x7f]/ /g;' \
+#        | mail -s "HACMP Status for `hostname`" hacmpstatus@majordomo.pjm.com \
+#        > /dev/null
+#    fi
+
+
+    ;;
+esac
+
+
+cd ${BASEDIR}
+[ -f ${TAR} ] && rm -f ${TAR}
+tar cvpf ${TAR} * >/dev/null
+#compress -f ${TAR}
+gzip -f ${TAR}
+cd /tmp
+rm -rf ${BASEDIR}
+
+exit 0
